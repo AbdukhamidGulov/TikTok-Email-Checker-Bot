@@ -1,3 +1,5 @@
+"""Логика проверки TikTok"""
+
 from __future__ import annotations
 from asyncio import Semaphore, create_task, sleep, gather, wait_for, TimeoutError as AsyncTimeoutError, Queue
 from typing import List, Optional, Callable, Awaitable
@@ -5,9 +7,9 @@ from random import uniform
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 from datetime import datetime, timedelta
 
+from config import MAX_CONCURRENCY, REQUEST_TIMEOUT
+
 URL_MAIN = "https://www.tiktok.com/"
-MAX_CONCURRENCY = 10
-REQUEST_TIMEOUT = 30000
 
 
 class ProxyModel:

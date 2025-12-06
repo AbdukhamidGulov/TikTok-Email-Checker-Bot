@@ -3,16 +3,19 @@ from os import makedirs, remove
 from logging import basicConfig, getLogger, INFO, ERROR
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, Message
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from tiktok_worker import TikTokChecker
-from keyboards import get_main_keyboard, get_cancel_keyboard, remove_keyboard
+from keyboards import (
+    get_main_keyboard, get_cancel_keyboard, remove_keyboard,
+    get_proxy_management_keyboard, get_delete_proxy_keyboard, get_back_keyboard
+)
 
 basicConfig(level=INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = getLogger(__name__)
@@ -36,6 +39,8 @@ def is_admin(user_id: int) -> bool:
 class CheckStates(StatesGroup):
     waiting_for_proxies = State()
     waiting_for_emails = State()
+    waiting_for_proxy_number = State()
+    waiting_for_proxy_numbers = State()
 
 
 async def send_log_async(user_id: int, message_text: str):
@@ -44,6 +49,24 @@ async def send_log_async(user_id: int, message_text: str):
             await bot.send_message(user_id, message_text)
     except Exception as e:
         logger.error(f"Ошибка отправки сообщения: {e}")
+
+
+def format_proxy_list(proxies: list) -> str:
+    """Форматирует список прокси для отображения"""
+    if not proxies:
+        return "❌ Список прокси пуст."
+
+    result = []
+    for i, proxy in enumerate(proxies, 1):
+        # Скрываем логин/пароль для безопасности
+        if '@' in proxy:
+            parts = proxy.split('@')
+            server = parts[-1]
+            result.append(f"{i}. {server}")
+        else:
+            result.append(f"{i}. {proxy}")
+
+    return "📋 <b>Список прокси:</b>\n" + "\n".join(result)
 
 
 @dp.message(CommandStart())
@@ -69,6 +92,317 @@ async def cmd_start(message: Message, state: FSMContext):
     )
 
     await message.answer(welcome_text, reply_markup=get_main_keyboard())
+
+
+@dp.message(F.text == "🗑️ Управление прокси")
+async def handle_proxy_management(message: Message, state: FSMContext):
+    """Меню управления прокси"""
+    if not is_admin(message.from_user.id):
+        return
+
+    await state.clear()
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies_count = len(data.get("proxies", []))
+
+    await message.answer(
+        f"⚙️ <b>Управление прокси</b>\n\n"
+        f"Текущее количество: <b>{proxies_count}</b>\n\n"
+        f"Выберите действие:",
+        reply_markup=get_proxy_management_keyboard()
+    )
+
+
+@dp.message(F.text == "👁️ Показать прокси")
+async def handle_show_proxies(message: Message):
+    """Показать список прокси"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies = data.get("proxies", [])
+
+    if not proxies:
+        await message.answer("❌ Список прокси пуст.", reply_markup=get_proxy_management_keyboard())
+        return
+
+    await message.answer(format_proxy_list(proxies), reply_markup=get_proxy_management_keyboard())
+
+
+@dp.message(F.text == "❌ Удалить прокси")
+async def handle_delete_proxies_menu(message: Message):
+    """Меню удаления прокси"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies = data.get("proxies", [])
+
+    if not proxies:
+        await message.answer("❌ Список прокси пуст.", reply_markup=get_proxy_management_keyboard())
+        return
+
+    await message.answer(
+        f"🗑️ <b>Удаление прокси</b>\n\n"
+        f"Всего прокси: <b>{len(proxies)}</b>\n\n"
+        f"Выберите способ удаления:",
+        reply_markup=get_delete_proxy_keyboard()
+    )
+
+
+@dp.message(F.text == "1️⃣ Удалить по номеру")
+async def handle_delete_by_number(message: Message, state: FSMContext):
+    """Удалить прокси по номеру"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies = data.get("proxies", [])
+
+    if not proxies:
+        await message.answer("❌ Список прокси пуст.", reply_markup=get_proxy_management_keyboard())
+        return
+
+    await message.answer(
+        f"{format_proxy_list(proxies)}\n\n"
+        f"Введите номер прокси для удаления (1-{len(proxies)}):",
+        reply_markup=get_back_keyboard()
+    )
+    await state.set_state(CheckStates.waiting_for_proxy_number)
+
+
+@dp.message(F.text == "🔢 Удалить несколько")
+async def handle_delete_multiple(message: Message, state: FSMContext):
+    """Удалить несколько прокси"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies = data.get("proxies", [])
+
+    if not proxies:
+        await message.answer("❌ Список прокси пуст.", reply_markup=get_proxy_management_keyboard())
+        return
+
+    await message.answer(
+        f"{format_proxy_list(proxies)}\n\n"
+        f"Введите номера прокси через запятую (например: 1,3,5) или диапазон (например: 1-3):",
+        reply_markup=get_back_keyboard()
+    )
+    await state.set_state(CheckStates.waiting_for_proxy_numbers)
+
+
+@dp.message(F.text == "🚫 Удалить все")
+async def handle_delete_all_proxies(message: Message):
+    """Удалить все прокси"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+
+    # Проверяем, запущена ли проверка
+    if user_id in checker_tasks and checker_tasks[user_id] and not checker_tasks[user_id].done():
+        await message.answer(
+            "⚠️ <b>Нельзя удалить прокси во время проверки!</b>\n"
+            "Сначала остановите проверку командой /stop.",
+            reply_markup=get_proxy_management_keyboard()
+        )
+        return
+
+    if user_id not in active_checkers or not active_checkers[user_id]["proxies"]:
+        await message.answer("❌ Список прокси и так пуст.", reply_markup=get_proxy_management_keyboard())
+        return
+
+    proxies_count = len(active_checkers[user_id]["proxies"])
+    active_checkers[user_id]["proxies"] = []
+
+    await message.answer(
+        f"✅ <b>Удалено все {proxies_count} прокси.</b>",
+        reply_markup=get_proxy_management_keyboard()
+    )
+
+
+@dp.message(F.text == "🔄 Обновить список")
+async def handle_refresh_list(message: Message):
+    """Обновить список прокси"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies = data.get("proxies", [])
+
+    if not proxies:
+        await message.answer("❌ Список прокси пуст.", reply_markup=get_proxy_management_keyboard())
+        return
+
+    await message.answer(format_proxy_list(proxies), reply_markup=get_proxy_management_keyboard())
+
+
+@dp.message(CheckStates.waiting_for_proxy_number)
+async def handle_proxy_number_input(message: Message, state: FSMContext):
+    """Обработка ввода номера прокси для удаления"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies = data.get("proxies", [])
+
+    if not proxies:
+        await message.answer("❌ Список прокси пуст.", reply_markup=get_proxy_management_keyboard())
+        await state.clear()
+        return
+
+    # Проверка на команду "назад"
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await message.answer("🔙 Возвращаюсь в меню удаления...", reply_markup=get_delete_proxy_keyboard())
+        return
+
+    try:
+        proxy_num = int(message.text.strip())
+
+        if proxy_num < 1 or proxy_num > len(proxies):
+            await message.answer(
+                f"❌ Номер должен быть от 1 до {len(proxies)}. Попробуйте снова:",
+                reply_markup=get_back_keyboard()
+            )
+            return
+
+        # Удаляем прокси
+        deleted_proxy = proxies.pop(proxy_num - 1)
+        active_checkers[user_id]["proxies"] = proxies
+
+        await state.clear()
+        await message.answer(
+            f"✅ <b>Удален прокси #{proxy_num}:</b>\n"
+            f"<code>{deleted_proxy}</code>\n\n"
+            f"Осталось прокси: <b>{len(proxies)}</b>",
+            reply_markup=get_proxy_management_keyboard()
+        )
+
+    except ValueError:
+        await message.answer(
+            "❌ Пожалуйста, введите правильный номер. Попробуйте снова:",
+            reply_markup=get_back_keyboard()
+        )
+
+
+@dp.message(CheckStates.waiting_for_proxy_numbers)
+async def handle_proxy_numbers_input(message: Message, state: FSMContext):
+    """Обработка ввода нескольких номеров прокси для удаления"""
+    if not is_admin(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    data = active_checkers.get(user_id, {"proxies": []})
+    proxies = data.get("proxies", [])
+
+    if not proxies:
+        await message.answer("❌ Список прокси пуст.", reply_markup=get_proxy_management_keyboard())
+        await state.clear()
+        return
+
+    # Проверка на команду "назад"
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await message.answer("🔙 Возвращаюсь в меню удаления...", reply_markup=get_delete_proxy_keyboard())
+        return
+
+    try:
+        input_text = message.text.strip()
+        indices_to_delete = set()
+
+        # Обработка разных форматов ввода
+        if ',' in input_text:
+            # Формат: 1,3,5
+            parts = input_text.split(',')
+            for part in parts:
+                part = part.strip()
+                if '-' in part:
+                    # Поддиапазон внутри запятых: 1-3,5
+                    range_parts = part.split('-')
+                    if len(range_parts) == 2:
+                        start = int(range_parts[0].strip())
+                        end = int(range_parts[1].strip())
+                        for i in range(start, end + 1):
+                            indices_to_delete.add(i)
+                else:
+                    indices_to_delete.add(int(part))
+
+        elif '-' in input_text:
+            # Формат: 1-3
+            range_parts = input_text.split('-')
+            if len(range_parts) == 2:
+                start = int(range_parts[0].strip())
+                end = int(range_parts[1].strip())
+                for i in range(start, end + 1):
+                    indices_to_delete.add(i)
+            else:
+                raise ValueError("Неправильный формат диапазона")
+
+        else:
+            # Просто один номер
+            indices_to_delete.add(int(input_text))
+
+        # Проверяем номера
+        valid_indices = []
+        deleted_proxies = []
+
+        for idx in sorted(indices_to_delete, reverse=True):  # Удаляем с конца
+            if 1 <= idx <= len(proxies):
+                valid_indices.append(idx)
+                deleted_proxies.append(proxies.pop(idx - 1))
+
+        if not valid_indices:
+            await message.answer(
+                "❌ Нет корректных номеров для удаления. Попробуйте снова:",
+                reply_markup=get_back_keyboard()
+            )
+            return
+
+        # Сохраняем обновленный список
+        active_checkers[user_id]["proxies"] = proxies
+
+        await state.clear()
+
+        # Формируем сообщение об удалении
+        if len(deleted_proxies) == 1:
+            proxy_info = f"Удален прокси #{valid_indices[0]}: <code>{deleted_proxies[0]}</code>"
+        else:
+            proxy_info = f"Удалено прокси: {', '.join(f'#{i}' for i in sorted(valid_indices))}"
+
+        await message.answer(
+            f"✅ <b>Успешно удалено {len(deleted_proxies)} прокси:</b>\n"
+            f"{proxy_info}\n\n"
+            f"Осталось прокси: <b>{len(proxies)}</b>",
+            reply_markup=get_proxy_management_keyboard()
+        )
+
+    except (ValueError, Exception) as e:
+        await message.answer(
+            f"❌ Ошибка в формате ввода.\n"
+            f"Используйте: '1,3,5' или '1-3' или просто '2'\n"
+            f"Попробуйте снова:",
+            reply_markup=get_back_keyboard()
+        )
+
+
+@dp.message(F.text == "◀️ Назад")
+async def handle_back_to_proxy_menu(message: Message, state: FSMContext):
+    """Возврат в меню управления прокси"""
+    if not is_admin(message.from_user.id):
+        return
+
+    await state.clear()
+    await message.answer("🔙 Возвращаюсь в меню управления прокси...",
+                         reply_markup=get_proxy_management_keyboard())
 
 
 @dp.message(F.text == "📤 Загрузить прокси")
@@ -105,7 +439,7 @@ async def handle_upload_emails(message: Message, state: FSMContext):
         "✉️ <b>Загрузка почт</b>\n\n"
         "Отправьте сообщение или текстовый файл (.txt) с почтами.\n"
         "<i>Формат: 1 почта на строку.</i>\n\n"
-        "Используйте кнопку ниже для отмены:",
+        "Используйте кнопку ниже для отмена:",
         reply_markup=get_cancel_keyboard()
     )
     await state.set_state(CheckStates.waiting_for_emails)
@@ -119,6 +453,7 @@ async def handle_proxies_input(message: Message, state: FSMContext):
 
     user_id = message.from_user.id
 
+    # Проверка на отмену
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("❌ Загрузка прокси отменена.", reply_markup=get_main_keyboard())
@@ -170,6 +505,7 @@ async def handle_emails_input(message: Message, state: FSMContext):
 
     user_id = message.from_user.id
 
+    # Проверка на отмену
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("❌ Загрузка почт отменена.", reply_markup=get_main_keyboard())
@@ -354,6 +690,12 @@ async def handle_cancel(message: Message, state: FSMContext):
     elif current_state == CheckStates.waiting_for_emails.state:
         await state.clear()
         await message.answer("❌ Загрузка почт отменена.", reply_markup=get_main_keyboard())
+    elif current_state == CheckStates.waiting_for_proxy_number.state:
+        await state.clear()
+        await message.answer("❌ Удаление прокси отменено.", reply_markup=get_proxy_management_keyboard())
+    elif current_state == CheckStates.waiting_for_proxy_numbers.state:
+        await state.clear()
+        await message.answer("❌ Удаление прокси отменено.", reply_markup=get_proxy_management_keyboard())
     else:
         await message.answer("Нечего отменять.", reply_markup=get_main_keyboard())
 
@@ -399,12 +741,10 @@ async def run_checker_task(message: Message, checker: TikTokChecker, emails: lis
 
 
 async def on_startup():
-    """Действия при запуске бота"""
     logger.info("Бот запущен")
 
 
 async def on_shutdown():
-    """Действия при остановке бота"""
     logger.info("Остановка бота...")
 
     for user_id, task in list(checker_tasks.items()):
@@ -432,6 +772,9 @@ async def main():
     """Главная функция запуска бота"""
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
+
+    # Команды регистрируются автоматически через декораторы @dp.message
+    # Обработчики FSM также зарегистрированы через декораторы
 
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
