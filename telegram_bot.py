@@ -10,6 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import FSInputFile, Message
 from aiogram.fsm.storage.memory import MemoryStorage
 from tiktok_worker import TikTokChecker
+from keyboards import get_main_keyboard, get_back_keyboard, get_cancel_keyboard, remove_keyboard
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -36,7 +37,6 @@ class CheckStates(StatesGroup):
 
 
 async def send_log_async(user_id: int, message_text: str):
-    """Callback для отправки логов из TikTokChecker"""
     try:
         if bot:
             await bot.send_message(user_id, message_text)
@@ -46,7 +46,7 @@ async def send_log_async(user_id: int, message_text: str):
 
 async def cmd_start(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
-        await message.answer("У вас нет доступа к этому боту.")
+        await message.answer("У вас нет доступа к этому боту.", reply_markup=remove_keyboard())
         return
 
     await state.clear()
@@ -60,19 +60,15 @@ async def cmd_start(message: Message, state: FSMContext):
             "checker_instance": None
         }
 
-    await message.answer(
-        "👋 <b>Привет! Я готов к работе.</b>\n\n"
-        "<i>Доступные команды:</i>\n"
-        "/start_check - Начать проверку\n"
-        "/stop - Остановить текущую проверку\n"
-        "/upload_proxies - Загрузить прокси\n"
-        "/upload_emails - Загрузить почты\n"
-        "/get_valid - Выгрузить валидные почты\n"
-        "/status - Показать загруженные данные"
+    welcome_text = (
+        "👋 <b>Добро пожаловать в TikTok Email Checker Bot!</b>\n\n"
+        "Используйте кнопки ниже для управления ботом:"
     )
 
+    await message.answer(welcome_text, reply_markup=get_main_keyboard())
 
-async def cmd_upload_proxies(message: Message, state: FSMContext):
+
+async def handle_upload_proxies(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
 
@@ -81,13 +77,16 @@ async def cmd_upload_proxies(message: Message, state: FSMContext):
         active_checkers[user_id] = {"proxies": [], "emails": [], "valid_emails": [], "checker_instance": None}
 
     await message.answer(
-        "📤 <b>Пришлите сообщение или текстовый файл (.txt) с прокси.</b>\n\n"
-        "<i>Формат: 1 прокси на строку (user:pass@ip:port или ip:port).</i>"
+        "📤 <b>Загрузка прокси</b>\n\n"
+        "Отправьте сообщение или текстовый файл (.txt) с прокси.\n"
+        "<i>Формат: 1 прокси на строку (user:pass@ip:port или ip:port).</i>\n\n"
+        "Используйте кнопку ниже для отмены:",
+        reply_markup=get_cancel_keyboard()
     )
     await state.set_state(CheckStates.waiting_for_proxies)
 
 
-async def cmd_upload_emails(message: Message, state: FSMContext):
+async def handle_upload_emails(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
 
@@ -96,8 +95,11 @@ async def cmd_upload_emails(message: Message, state: FSMContext):
         active_checkers[user_id] = {"proxies": [], "emails": [], "valid_emails": [], "checker_instance": None}
 
     await message.answer(
-        "✉️ <b>Пришлите сообщение или текстовый файл (.txt) с почтами.</b>\n\n"
-        "<i>Формат: 1 почта на строку.</i>"
+        "✉️ <b>Загрузка почт</b>\n\n"
+        "Отправьте сообщение или текстовый файл (.txt) с почтами.\n"
+        "<i>Формат: 1 почта на строку.</i>\n\n"
+        "Используйте кнопку ниже для отмены:",
+        reply_markup=get_cancel_keyboard()
     )
     await state.set_state(CheckStates.waiting_for_emails)
 
@@ -107,6 +109,13 @@ async def handle_proxies_input(message: Message, state: FSMContext):
         return
 
     user_id = message.from_user.id
+
+    # Проверка на отмену
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Загрузка прокси отменена.", reply_markup=get_main_keyboard())
+        return
+
     items = []
 
     if message.document and message.document.file_name.endswith(('.txt', '.list')):
@@ -141,7 +150,7 @@ async def handle_proxies_input(message: Message, state: FSMContext):
     active_checkers[user_id]["proxies"] = items
     logger.info(f"Сохранено {len(items)} прокси для user {user_id}")
 
-    await message.answer(f"✅ Успешно загружено <b>{len(items)}</b> прокси.")
+    await message.answer(f"✅ Успешно загружено <b>{len(items)}</b> прокси.", reply_markup=get_main_keyboard())
     await state.clear()
 
 
@@ -150,6 +159,13 @@ async def handle_emails_input(message: Message, state: FSMContext):
         return
 
     user_id = message.from_user.id
+
+    # Проверка на отмену
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("❌ Загрузка почт отменена.", reply_markup=get_main_keyboard())
+        return
+
     items = []
 
     if message.document and message.document.file_name.endswith(('.txt', '.list')):
@@ -184,26 +200,27 @@ async def handle_emails_input(message: Message, state: FSMContext):
     active_checkers[user_id]["emails"] = items
     logger.info(f"Сохранено {len(items)} почт для user {user_id}")
 
-    await message.answer(f"✅ Успешно загружено <b>{len(items)}</b> почт.")
+    await message.answer(f"✅ Успешно загружено <b>{len(items)}</b> почт.", reply_markup=get_main_keyboard())
     await state.clear()
 
 
-async def cmd_start_check(message: Message):
+async def handle_start_check(message: Message):
     user_id = message.from_user.id
     if not is_admin(user_id):
         return
 
     if user_id in checker_tasks and not checker_tasks[user_id].done():
-        await message.answer("⚠️ <b>Проверка уже запущена!</b> Используйте /stop.")
+        await message.answer("⚠️ <b>Проверка уже запущена!</b> Используйте кнопку 'Остановить'.",
+                             reply_markup=get_main_keyboard())
         return
 
     data = active_checkers.get(user_id, {"proxies": [], "emails": [], "valid_emails": [], "checker_instance": None})
 
     if not data["proxies"]:
-        await message.answer("❌ <b>Сначала загрузите прокси</b> с помощью /upload_proxies.")
+        await message.answer("❌ <b>Сначала загрузите прокси!</b>", reply_markup=get_main_keyboard())
         return
     if not data["emails"]:
-        await message.answer("❌ <b>Сначала загрузите почты</b> с помощью /upload_emails.")
+        await message.answer("❌ <b>Сначала загрузите почты!</b>", reply_markup=get_main_keyboard())
         return
 
     emails_count = len(data["emails"])
@@ -213,7 +230,8 @@ async def cmd_start_check(message: Message):
         f"🚀 <b>Запускаю проверку...</b>\n\n"
         f"📧 Почты: <b>{emails_count}</b>\n"
         f"🔗 Прокси: <b>{proxies_count}</b>\n"
-        f"⚡ Потоков: <b>{min(proxies_count, 10)}</b>"
+        f"⚡ Потоков: <b>{min(proxies_count, 10)}</b>",
+        reply_markup=get_main_keyboard()
     )
 
     try:
@@ -225,18 +243,18 @@ async def cmd_start_check(message: Message):
 
         active_checkers[user_id]["checker_instance"] = checker
 
-        # ПЕРЕДАЕМ message ПЕРВЫМ АРГУМЕНТОМ!
         task = asyncio.create_task(run_checker_task(message, checker, data["emails"], user_id))
         checker_tasks[user_id] = task
 
     except Exception as ex:
-        await message.answer(f"❌ <b>Ошибка при запуске:</b> {str(ex)}")
+        await message.answer(f"❌ <b>Ошибка при запуске:</b> {str(ex)}", reply_markup=get_main_keyboard())
         active_checkers[user_id]["checker_instance"] = None
 
 
 async def run_checker_task(message: Message, checker: TikTokChecker, emails: list, user_id: int):
     try:
-        await message.answer(
+        await bot.send_message(
+            user_id,
             f"📊 <b>Запускаю проверку {len(emails)} почт...</b>\n"
             f"Используется {min(len(checker.proxy_pool), 10)} потоков"
         )
@@ -246,7 +264,8 @@ async def run_checker_task(message: Message, checker: TikTokChecker, emails: lis
         if user_id in active_checkers:
             active_checkers[user_id]["valid_emails"].extend(valid_emails)
 
-        await message.answer(
+        await bot.send_message(
+            user_id,
             f"🏁 <b>Проверка завершена!</b>\n"
             f"Всего проверено: {checker.checked_count}\n"
             f"Найдено валидных: <b>{len(valid_emails)}</b>"
@@ -257,10 +276,13 @@ async def run_checker_task(message: Message, checker: TikTokChecker, emails: lis
         if user_id in active_checkers and active_checkers[user_id]["checker_instance"]:
             checker = active_checkers[user_id]["checker_instance"]
             checker.is_running = False
-            await message.answer("🛑 <b>Проверка принудительно остановлена.</b>")
+            await bot.send_message(user_id, "🛑 <b>Проверка принудительно остановлена.</b>")
     except Exception as e:
         logger.error(f"Ошибка в checker task: {e}", exc_info=True)
-        await message.answer(f"❌ <b>Ошибка в процессе проверки:</b>\n{str(e)[:200]}")
+        await bot.send_message(
+            user_id,
+            f"❌ <b>Ошибка в процессе проверки:</b>\n{str(e)[:200]}"
+        )
     finally:
         if user_id in active_checkers:
             active_checkers[user_id]["checker_instance"] = None
@@ -268,26 +290,26 @@ async def run_checker_task(message: Message, checker: TikTokChecker, emails: lis
             checker_tasks[user_id] = None
 
 
-async def cmd_stop(message: Message):
+async def handle_stop(message: Message):
     user_id = message.from_user.id
     if not is_admin(user_id):
         return
 
     if user_id in checker_tasks and checker_tasks[user_id] and not checker_tasks[user_id].done():
         checker_tasks[user_id].cancel()
-        await message.answer("🛑 <b>Останавливаю проверку...</b>")
+        await message.answer("🛑 <b>Останавливаю проверку...</b>", reply_markup=get_main_keyboard())
 
         try:
             await checker_tasks[user_id]
         except asyncio.CancelledError:
             pass
 
-        await message.answer("✅ <b>Проверка остановлена.</b>")
+        await message.answer("✅ <b>Проверка остановлена.</b>", reply_markup=get_main_keyboard())
     else:
-        await message.answer("Проверка не была запущена.")
+        await message.answer("Проверка не была запущена.", reply_markup=get_main_keyboard())
 
 
-async def cmd_get_valid(message: Message):
+async def handle_get_valid(message: Message):
     user_id = message.from_user.id
     if not is_admin(user_id):
         return
@@ -296,7 +318,7 @@ async def cmd_get_valid(message: Message):
     valid_emails = data.get("valid_emails", [])
 
     if not valid_emails:
-        await message.answer("<b>Нет найденных валидных почт.</b>")
+        await message.answer("<b>Нет найденных валидных почт.</b>", reply_markup=get_main_keyboard())
         return
 
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -309,12 +331,12 @@ async def cmd_get_valid(message: Message):
 
     document = FSInputFile(file_path)
     await message.answer_document(document)
-    await message.answer(f"📤 <b>Отправлено {len(valid_emails)} валидных почт.</b>")
+    await message.answer(f"📤 <b>Отправлено {len(valid_emails)} валидных почт.</b>", reply_markup=get_main_keyboard())
 
     os.remove(file_path)
 
 
-async def cmd_status(message: Message):
+async def handle_status(message: Message):
     user_id = message.from_user.id
     if not is_admin(user_id):
         return
@@ -337,7 +359,12 @@ async def cmd_status(message: Message):
         f"• ⚙️ Проверка запущена: {status_icon} <b>{'Да' if is_running else 'Нет'}</b>"
     )
 
-    await message.answer(status_text)
+    await message.answer(status_text, reply_markup=get_main_keyboard())
+
+
+async def handle_back_to_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🔙 <b>Возвращаюсь в главное меню...</b>", reply_markup=get_main_keyboard())
 
 
 async def on_startup():
@@ -372,14 +399,19 @@ async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
+    # Обработчики команд
     dp.message.register(cmd_start, CommandStart())
-    dp.message.register(cmd_upload_proxies, Command("upload_proxies"))
-    dp.message.register(cmd_upload_emails, Command("upload_emails"))
-    dp.message.register(cmd_start_check, Command("start_check"))
-    dp.message.register(cmd_stop, Command("stop"))
-    dp.message.register(cmd_get_valid, Command("get_valid"))
-    dp.message.register(cmd_status, Command("status"))
 
+    # Обработчики кнопок
+    dp.message.register(handle_upload_proxies, F.text == "📤 Загрузить прокси")
+    dp.message.register(handle_upload_emails, F.text == "✉️ Загрузить почты")
+    dp.message.register(handle_start_check, F.text == "🚀 Начать проверку")
+    dp.message.register(handle_stop, F.text == "🛑 Остановить")
+    dp.message.register(handle_status, F.text == "📊 Статус")
+    dp.message.register(handle_get_valid, F.text == "📥 Выгрузить валидные")
+    dp.message.register(handle_back_to_menu, F.text == "◀️ Назад в меню")
+
+    # Обработчики состояний FSM
     dp.message.register(handle_proxies_input, CheckStates.waiting_for_proxies,
                         F.text | F.document)
     dp.message.register(handle_emails_input, CheckStates.waiting_for_emails,
@@ -400,5 +432,3 @@ if __name__ == "__main__":
         print("\n🛑 Бот остановлен пользователем.")
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}", exc_info=True)
-
-# TODO: Создать файл с кнопками и создать кнопки завтра
