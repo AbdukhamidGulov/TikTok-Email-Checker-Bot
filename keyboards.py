@@ -4,22 +4,12 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🚀 Начать проверку"), KeyboardButton(text="🛑 Остановить")],
             [KeyboardButton(text="📤 Загрузить прокси"), KeyboardButton(text="✉️ Загрузить почты")],
+            [KeyboardButton(text="🚀 Начать проверку"), KeyboardButton(text="🛑 Остановить")],
             [KeyboardButton(text="📊 Статус"), KeyboardButton(text="📥 Выгрузить валидные")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False
-    )
-
-# Клавиатура для возврата в главное меню
-def get_back_keyboard():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="◀️ Назад в меню")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=True
     )
 
 # Клавиатура для отмены загрузки
