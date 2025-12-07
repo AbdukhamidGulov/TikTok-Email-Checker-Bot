@@ -8,7 +8,7 @@ from datetime import datetime
 from os import makedirs, remove
 
 from config import TEMP_DIR
-from tiktok_worker import TikTokChecker
+from tiktok_checker.checker import TikTokChecker
 from keyboards import get_main_keyboard, get_proxy_management_keyboard
 from utils import is_admin, active_checkers, checker_tasks, send_log_async
 from states import CheckStates
