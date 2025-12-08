@@ -7,6 +7,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
+from database import init_db
 from handlers import all_routers
 from utils import checker_tasks, active_checkers
 
@@ -16,6 +17,7 @@ logger = getLogger(__name__)
 
 async def on_startup():
     """Действия при запуске бота"""
+    await init_db()
     logger.info("🚀 Бот запущен")
 
 

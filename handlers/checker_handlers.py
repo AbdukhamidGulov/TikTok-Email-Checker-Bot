@@ -8,6 +8,7 @@ from datetime import datetime
 from os import makedirs, remove
 
 from config import TEMP_DIR
+from database import get_active_proxies, get_pending_emails
 from tiktok_checker.checker import TikTokChecker
 from keyboards import get_main_keyboard, get_proxy_management_keyboard
 from utils import is_admin, active_checkers, checker_tasks, send_log_async
@@ -36,7 +37,8 @@ async def run_checker_task(bot, message: Message, checker: TikTokChecker, emails
             user_id,
             f"🏁 <b>Проверка завершена!</b>\n"
             f"Всего проверено: {checker.checked_count}\n"
-            f"Найдено валидных: <b>{len(valid_emails)}</b>"
+            f"Найдено валидных: <b>{len(valid_emails)}</b>",
+            reply_markup=get_main_keyboard(is_running=False)
         )
 
     except CancelledError:
@@ -44,12 +46,13 @@ async def run_checker_task(bot, message: Message, checker: TikTokChecker, emails
         if user_id in active_checkers and active_checkers[user_id]["checker_instance"]:
             checker = active_checkers[user_id]["checker_instance"]
             checker.is_running = False
-            await bot.send_message(user_id, "🛑 <b>Проверка принудительно остановлена.</b>")
+            await bot.send_message(user_id, "🛑 <b>Проверка принудительно остановлена.</b>",
+                                   reply_markup=get_main_keyboard(is_running=False))
     except Exception as e:
         logger.error(f"Ошибка в checker task: {e}", exc_info=True)
         await bot.send_message(
             user_id,
-            f"❌ <b>Ошибка в процессе проверки:</b>\n{str(e)[:200]}"
+            f"❌ <b>Ошибка в процессе проверки:</b>\n{str(e)[:200]}", reply_markup=get_main_keyboard(is_running=False)
         )
     finally:
         if user_id in active_checkers:
@@ -65,46 +68,57 @@ async def handle_start_check(message: Message, bot):
     if not is_admin(user_id):
         return
 
+    # Проверка: не запущена ли уже задача
     if user_id in checker_tasks and not checker_tasks[user_id].done():
         await message.answer("⚠️ <b>Проверка уже запущена!</b> Используйте кнопку 'Остановить'.",
-                             reply_markup=get_main_keyboard())
+                             reply_markup=get_main_keyboard(is_running=True))
         return
 
-    data = active_checkers.get(user_id, {"proxies": [], "emails": [], "valid_emails": [], "checker_instance": None})
+    # 1. ЗАГРУЖАЕМ ДАННЫЕ ИЗ БАЗЫ ДАННЫХ
+    proxies = await get_active_proxies(user_id)
+    emails = await get_pending_emails(user_id)
 
-    if not data["proxies"]:
-        await message.answer("❌ <b>Сначала загрузите прокси!</b>", reply_markup=get_main_keyboard())
+    # Проверки на наличие данных
+    if not proxies:
+        await message.answer("❌ <b>Сначала загрузите прокси!</b>", reply_markup=get_main_keyboard(is_running=False))
         return
-    if not data["emails"]:
-        await message.answer("❌ <b>Сначала загрузите почты!</b>", reply_markup=get_main_keyboard())
+    if not emails:
+        await message.answer("❌ <b>Нет почт для проверки!</b>\n(Либо список пуст, либо все уже проверены)", reply_markup=get_main_keyboard(is_running=False))
         return
 
-    emails_count = len(data["emails"])
-    proxies_count = len(data["proxies"])
+    emails_count = len(emails)
+    proxies_count = len(proxies)
 
     await message.answer(
         f"🚀 <b>Запускаю проверку...</b>\n\n"
-        f"📧 Почты: <b>{emails_count}</b>\n"
-        f"🔗 Прокси: <b>{proxies_count}</b>\n"
+        f"📧 Осталось проверить: <b>{emails_count}</b>\n"
+        f"🔗 Активных прокси: <b>{proxies_count}</b>\n"
         f"⚡ Потоков: <b>{min(proxies_count, 10)}</b>",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(is_running=True)
     )
 
     try:
+        # Создаем чекер, передавая данные из БД
         checker = TikTokChecker(
-            proxies=data["proxies"],
-            log_callback=lambda user_id, msg: send_log_async(bot, user_id, msg),
+            proxies=proxies,
+            log_callback=lambda uid, msg: send_log_async(bot, uid, msg),
             user_id=user_id
         )
 
+        # Сохраняем ссылку на чекер для остановки
+        if user_id not in active_checkers:
+            active_checkers[user_id] = {}
         active_checkers[user_id]["checker_instance"] = checker
 
-        task = create_task(run_checker_task(bot, message, checker, data["emails"], user_id))
+        # Запускаем задачу
+        task = create_task(run_checker_task(bot, message, checker, emails, user_id))
         checker_tasks[user_id] = task
 
     except Exception as ex:
-        await message.answer(f"❌ <b>Ошибка при запуске:</b> {str(ex)}", reply_markup=get_main_keyboard())
-        active_checkers[user_id]["checker_instance"] = None
+        logger.error(f"Ошибка запуска: {ex}")
+        await message.answer(f"❌ <b>Ошибка при запуске:</b> {str(ex)}", reply_markup=get_main_keyboard(is_running=False))
+        if user_id in active_checkers:
+            active_checkers[user_id]["checker_instance"] = None
 
 
 @router.message(F.text == "🛑 Остановить")

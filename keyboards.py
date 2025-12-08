@@ -3,15 +3,29 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 
-def get_main_keyboard():
-    """Главное меню"""
+def get_main_keyboard(is_running: bool = False):
+    """
+    Главное меню.
+    Отображает кнопку "Остановить" если проверка активна,
+    или "Начать проверку" если она неактивна.
+    """
+
+    # Первая строка: либо "Начать", либо "Остановить"
+    action_row = []
+    if is_running:
+        action_row = [KeyboardButton(text="🛑 Остановить")]
+    else:
+        action_row = [KeyboardButton(text="🚀 Начать проверку")]
+
+    keyboard_layout = [
+        action_row,
+        [KeyboardButton(text="📤 Загрузить прокси"), KeyboardButton(text="✉️ Загрузить почты")],
+        [KeyboardButton(text="📊 Статус"), KeyboardButton(text="📥 Выгрузить валидные")],
+        [KeyboardButton(text="🗑️ Управление прокси")],
+    ]
+
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📤 Загрузить прокси"), KeyboardButton(text="✉️ Загрузить почты")],
-            [KeyboardButton(text="🚀 Начать проверку"), KeyboardButton(text="🛑 Остановить")],
-            [KeyboardButton(text="📊 Статус"), KeyboardButton(text="📥 Выгрузить валидные")],
-            [KeyboardButton(text="🗑️ Управление прокси")],
-        ],
+        keyboard=keyboard_layout,
         resize_keyboard=True,
         one_time_keyboard=False
     )
