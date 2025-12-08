@@ -88,13 +88,22 @@ async def get_stats(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("""
             SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'valid' THEN 1 ELSE 0 END) as valid,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'invalid' THEN 1 ELSE 0 END) as invalid
-            FROM emails WHERE user_id = ?
+                COALESCE(SUM(CASE WHEN status = 'valid' THEN 1 ELSE 0 END), 0) as valid,
+                COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pending,
+                COALESCE(SUM(CASE WHEN status = 'invalid' THEN 1 ELSE 0 END), 0) as invalid,
+                COUNT(email) as total 
+            FROM emails 
+            WHERE user_id = ?
         """, (user_id,)) as cursor:
-            return await cursor.fetchone()
+            # порядок: valid, pending, invalid, total
+            row = await cursor.fetchone()
+
+            if row is None:
+                return 0, 0, 0, 0
+
+                # Возвращаем в порядке: total, valid, pending, invalid
+            valid, pending, invalid, total = row
+            return total, valid, pending, invalid
 
 
 async def get_emails_by_status(user_id: int, status: str):

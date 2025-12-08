@@ -49,7 +49,7 @@ class TikTokChecker:
         browser = None
         try:
             async with async_playwright() as pw:
-                browser, context, page = await launch_browser_context(pw, proxy_str, headless=True)
+                browser, context, page = await launch_browser_context(pw, proxy_str, headless=False)
                 page.set_default_timeout(REQUEST_TIMEOUT)
 
                 await self.log(f"→ <code>{email}</code>: проверка через {server}")

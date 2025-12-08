@@ -3,10 +3,9 @@
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, CallbackQuery
 from os import makedirs, remove
-from asyncio import sleep
 from datetime import datetime
 
-from keyboards import get_main_keyboard, get_cancel_keyboard
+from keyboards import get_main_keyboard
 from utils import is_admin, checker_tasks, format_proxy_list
 from config import TEMP_DIR
 from database import get_stats, get_active_proxies, get_emails_by_status
@@ -71,7 +70,6 @@ async def send_email_dump_file(message: Message, user_id: int, status: str, titl
 
 
 # --- Основной обработчик статуса (Замена старого кода) ---
-
 @status_router.message(F.text == "📊 Статус")
 async def handle_status(message: Message):
     """Обработчик кнопки статуса, получает данные из БД и отображает кнопки деталей"""
@@ -79,21 +77,26 @@ async def handle_status(message: Message):
     if not is_admin(user_id):
         return
 
-    # БД: Получаем статистику по почтам (total, valid, pending, invalid)
+    # БД: Получаем статистику по почтам. stats должен быть кортежем (total, valid, pending, invalid).
     stats = await get_stats(user_id)
-    if stats is None:
+
+    # Гарантируем, что если stats пуст, то все значения равны 0.
+    # Это важно, даже если в get_stats есть обработка,
+    # так как stats может быть пустым кортежем () или None в зависимости от реализации fetch.
+    if not stats or stats[0] is None:
         total, valid, pending, invalid = 0, 0, 0, 0
     else:
+        # COALESCE в базе данных гарантирует, что valid, pending, invalid — это числа.
         total, valid, pending, invalid = stats
 
     # БД: Получаем количество активных прокси
     proxies = await get_active_proxies(user_id)
     proxies_count = len(proxies)
 
-    is_running = user_id in checker_tasks and checker_tasks[user_id] and not checker_tasks[user_id].done()
+    is_running = user_id in checker_tasks and checker_tasks.get(user_id) and not checker_tasks[user_id].done()
     status_icon = "🟢" if is_running else "🔴"
 
-    # Расчет проверенных (для удобства)
+    # Расчет проверенных (теперь это безопасно, так как valid и invalid — числа или 0)
     checked_count = valid + invalid
 
     status_text = (
