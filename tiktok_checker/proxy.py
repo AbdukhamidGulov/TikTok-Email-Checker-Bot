@@ -28,24 +28,25 @@ class ProxyModel:
         self._parse()
 
     def _parse(self):
-        # Ожидаем формат login:pass@host:port или host:port
-        if "@" in self.proxy_string:
-            left, right = self.proxy_string.split("@", 1)
-            if ":" in left:
-                u, p = left.split(":", 1)
-                self.username = u
-                self.password = p
-            host_port = right
-        else:
-            host_port = self.proxy_string
+        """Разбирает строку формата: ip:port:user:pass или ip:port"""
+        parts = self.proxy_string.split(":")
 
-        if ":" in host_port:
-            h, pr = host_port.rsplit(":", 1)
-            self.host = h
-            self.port = pr
+        if len(parts) == 4:
+            # Формат: ip:port:user:pass
+            self.host = parts[0]
+            self.port = parts[1]
+            self.username = parts[2]
+            self.password = parts[3]
+        elif len(parts) == 2:
+            # Формат: ip:port
+            self.host = parts[0]
+            self.port = parts[1]
         else:
-            self.host = host_port
+            # Неизвестный формат или только IP
+            self.host = self.proxy_string
             self.port = None
+            self.username = None
+            self.password = None
 
     def cooldown(self, minutes: int):
         self.is_cooling_down = True

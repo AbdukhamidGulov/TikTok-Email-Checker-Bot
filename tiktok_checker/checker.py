@@ -60,13 +60,14 @@ class TikTokChecker:
         return False
 
     async def check_email(self, email: str, proxy: ProxyModel):
-        proxy_cfg = proxy.to_playwright()
+        proxy_str = proxy.proxy_string
         server = proxy.host + (f":{proxy.port}" if proxy.port else "")
 
         browser = None
         try:
             async with async_playwright() as pw:
-                browser, context, page = await launch_browser_context(pw, proxy_cfg, headless=True)
+                # Передаем строку, как и ожидается
+                browser, context, page = await launch_browser_context(pw, proxy_str, headless=True)
                 page.set_default_timeout(REQUEST_TIMEOUT)
 
                 await self.log(f"→ <code>{email}</code>: проверка через {server}")
@@ -100,9 +101,12 @@ class TikTokChecker:
                     '[data-e2e="login-button"]'
                 ])
                 if not ok:
-                    proxy.error_count += 1
-                    proxy.cooldown(2)
-                    await self.log(f"⚠️ {email}: кнопка входа не найдена")
+                    # 🔴 УДАЛЁНЬ: proxy.error_count += 1
+                    # 🔴 УДАЛЁНЬ: proxy.cooldown(2)
+
+                    # Прокси не виноват, если не найдена кнопка. Логика, связанная с прокси, удалена.
+                    await self.log(
+                        f"⚠️ {email}: кнопка входа не найдена. Возможно, интерфейс TikTok изменился или это проблема Playwright.")
                     self.failed_emails.append(email)
                     return
 
