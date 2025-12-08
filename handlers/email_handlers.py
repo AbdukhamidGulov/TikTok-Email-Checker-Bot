@@ -10,13 +10,13 @@ from states import CheckStates
 from keyboards import get_main_keyboard, get_cancel_keyboard
 from utils import is_admin
 from database import add_emails
-import logging
+from logging import getLogger
 
-router = Router()
-logger = logging.getLogger(__name__)
+email_router = Router()
+logger = getLogger(__name__)
 
 
-@router.message(F.text == "✉️ Загрузить почты")
+@email_router.message(F.text == "✉️ Загрузить почты")
 async def handle_upload_emails(message: Message, state: FSMContext):
     """Обработчик кнопки загрузки почт"""
     if not is_admin(message.from_user.id):
@@ -32,7 +32,7 @@ async def handle_upload_emails(message: Message, state: FSMContext):
     await state.set_state(CheckStates.waiting_for_emails)
 
 
-@router.message(CheckStates.waiting_for_emails, F.text | F.document)
+@email_router.message(CheckStates.waiting_for_emails, F.text | F.document)
 async def handle_emails_input(message: Message, state: FSMContext):
     """Обработчик ввода почт (сохранение в БД)"""
     if not is_admin(message.from_user.id):

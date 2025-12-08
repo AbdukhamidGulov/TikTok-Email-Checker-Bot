@@ -15,7 +15,7 @@ from utils import is_admin, active_checkers, checker_tasks, send_log_async
 from states import CheckStates
 import logging
 
-router = Router()
+checker_router = Router()
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +61,7 @@ async def run_checker_task(bot, message: Message, checker: TikTokChecker, emails
             checker_tasks[user_id] = None
 
 
-@router.message(F.text == "🚀 Начать проверку")
+@checker_router.message(F.text == "🚀 Начать проверку")
 async def handle_start_check(message: Message, bot):
     """Обработчик кнопки начала проверки"""
     user_id = message.from_user.id
@@ -121,7 +121,7 @@ async def handle_start_check(message: Message, bot):
             active_checkers[user_id]["checker_instance"] = None
 
 
-@router.message(F.text == "🛑 Остановить")
+@checker_router.message(F.text == "🛑 Остановить")
 async def handle_stop(message: Message):
     """Обработчик кнопки остановки проверки"""
     user_id = message.from_user.id
@@ -142,7 +142,7 @@ async def handle_stop(message: Message):
         await message.answer("Проверка не была запущена.", reply_markup=get_main_keyboard())
 
 
-@router.message(F.text == "📥 Выгрузить валидные")
+@checker_router.message(F.text == "📥 Выгрузить валидные")
 async def handle_get_valid(message: Message):
     """Обработчик кнопки выгрузки валидных почт"""
     user_id = message.from_user.id
@@ -171,35 +171,7 @@ async def handle_get_valid(message: Message):
     remove(file_path)
 
 
-@router.message(F.text == "📊 Статус")
-async def handle_status(message: Message):
-    """Обработчик кнопки статуса"""
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        return
-
-    data = active_checkers.get(user_id, {"proxies": [], "emails": [], "valid_emails": []})
-
-    proxies_count = len(data.get("proxies", []))
-    emails_count = len(data.get("emails", []))
-    valid_count = len(data.get("valid_emails", []))
-
-    is_running = user_id in checker_tasks and checker_tasks[user_id] and not checker_tasks[user_id].done()
-
-    status_icon = "🟢" if is_running else "🔴"
-
-    status_text = (
-        f"📊 <b>ТЕКУЩИЙ СТАТУС</b>\n\n"
-        f"• 🔗 Прокси загружено: <b>{proxies_count}</b>\n"
-        f"• 📧 Почтов загружено: <b>{emails_count}</b>\n"
-        f"• ✅ Валидных найдено: <b>{valid_count}</b>\n"
-        f"• ⚙️ Проверка запущена: {status_icon} <b>{'Да' if is_running else 'Нет'}</b>"
-    )
-
-    await message.answer(status_text, reply_markup=get_main_keyboard())
-
-
-@router.message(F.text == "❌ Отмена")
+@checker_router.message(F.text == "❌ Отмена")
 async def handle_cancel(message: Message, state: FSMContext):
     """Обработчик кнопки отмены"""
     if not is_admin(message.from_user.id):

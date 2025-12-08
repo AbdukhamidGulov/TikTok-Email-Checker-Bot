@@ -97,6 +97,17 @@ async def get_stats(user_id: int):
             return await cursor.fetchone()
 
 
+async def get_emails_by_status(user_id: int, status: str):
+    """Получает все почты пользователя по заданному статусу ('valid', 'invalid', 'pending')"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("""
+            SELECT email FROM emails 
+            WHERE user_id = ? AND status = ?
+        """, (user_id, status)) as cursor:
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+
+
 async def clear_data(user_id: int, table: str):
     valid_tables = ["emails", "proxies"]
     if table not in valid_tables:

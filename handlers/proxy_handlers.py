@@ -15,11 +15,11 @@ from utils import is_admin, checker_tasks, format_proxy_list
 from database import add_proxies, get_active_proxies, clear_data
 from logging import getLogger
 
-router = Router()
+proxy_router = Router()
 logger = getLogger(__name__)
 
 
-@router.message(F.text == "🗑️ Управление прокси")
+@proxy_router.message(F.text == "🗑️ Управление прокси")
 async def handle_proxy_management(message: Message, state: FSMContext):
     """Меню управления прокси"""
     if not is_admin(message.from_user.id):
@@ -40,7 +40,7 @@ async def handle_proxy_management(message: Message, state: FSMContext):
     )
 
 
-@router.message(F.text == "👁️ Показать прокси")
+@proxy_router.message(F.text == "👁️ Показать прокси")
 async def handle_show_proxies(message: Message):
     """Показать список прокси"""
     if not is_admin(message.from_user.id):
@@ -57,7 +57,7 @@ async def handle_show_proxies(message: Message):
     await message.answer(format_proxy_list(proxies), reply_markup=get_proxy_management_keyboard())
 
 
-@router.message(F.text == "❌ Удалить прокси")
+@proxy_router.message(F.text == "❌ Удалить прокси")
 async def handle_delete_proxies_menu(message: Message):
     """Меню удаления прокси"""
     if not is_admin(message.from_user.id):
@@ -79,7 +79,7 @@ async def handle_delete_proxies_menu(message: Message):
     )
 
 
-@router.message(F.text == "1️⃣ Удалить по номеру")
+@proxy_router.message(F.text == "1️⃣ Удалить по номеру")
 async def handle_delete_by_number(message: Message, state: FSMContext):
     """Удалить прокси по номеру"""
     if not is_admin(message.from_user.id):
@@ -100,7 +100,7 @@ async def handle_delete_by_number(message: Message, state: FSMContext):
     await state.set_state(CheckStates.waiting_for_proxy_number)
 
 
-@router.message(F.text == "🔢 Удалить несколько")
+@proxy_router.message(F.text == "🔢 Удалить несколько")
 async def handle_delete_multiple(message: Message, state: FSMContext):
     """Удалить несколько прокси"""
     if not is_admin(message.from_user.id):
@@ -121,7 +121,7 @@ async def handle_delete_multiple(message: Message, state: FSMContext):
     await state.set_state(CheckStates.waiting_for_proxy_numbers)
 
 
-@router.message(F.text == "🚫 Удалить все")
+@proxy_router.message(F.text == "🚫 Удалить все")
 async def handle_delete_all_proxies(message: Message):
     """Удалить все прокси"""
     if not is_admin(message.from_user.id):
@@ -145,7 +145,7 @@ async def handle_delete_all_proxies(message: Message):
     )
 
 
-@router.message(F.text == "🔄 Обновить список")
+@proxy_router.message(F.text == "🔄 Обновить список")
 async def handle_refresh_list(message: Message):
     """Обновить список прокси"""
     if not is_admin(message.from_user.id):
@@ -154,7 +154,7 @@ async def handle_refresh_list(message: Message):
     await handle_show_proxies(message)
 
 
-@router.message(CheckStates.waiting_for_proxy_number)
+@proxy_router.message(CheckStates.waiting_for_proxy_number)
 async def handle_proxy_number_input(message: Message, state: FSMContext):
     """Удаление одного прокси (обновление БД)"""
     if not is_admin(message.from_user.id):
@@ -193,7 +193,7 @@ async def handle_proxy_number_input(message: Message, state: FSMContext):
         await message.answer("❌ Введите число.")
 
 
-@router.message(CheckStates.waiting_for_proxy_numbers)
+@proxy_router.message(CheckStates.waiting_for_proxy_numbers)
 async def handle_proxy_numbers_input(message: Message, state: FSMContext):
     """Удаление нескольких прокси (обновление БД)"""
     if not is_admin(message.from_user.id):
@@ -262,7 +262,7 @@ async def handle_proxy_numbers_input(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка формата. Пример: 1,3,5 или 1-10")
 
 
-@router.message(F.text == "📤 Загрузить прокси")
+@proxy_router.message(F.text == "📤 Загрузить прокси")
 async def handle_upload_proxies(message: Message, state: FSMContext):
     """Обработчик кнопки загрузки прокси"""
     if not is_admin(message.from_user.id):
@@ -277,7 +277,7 @@ async def handle_upload_proxies(message: Message, state: FSMContext):
     await state.set_state(CheckStates.waiting_for_proxies)
 
 
-@router.message(CheckStates.waiting_for_proxies, F.text | F.document)
+@proxy_router.message(CheckStates.waiting_for_proxies, F.text | F.document)
 async def handle_proxies_input(message: Message, state: FSMContext):
     """Ввод прокси -> Сохранение в БД"""
     if not is_admin(message.from_user.id):
