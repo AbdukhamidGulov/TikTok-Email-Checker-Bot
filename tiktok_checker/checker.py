@@ -10,8 +10,8 @@ from .proxy import ProxyModel
 from .browser_utils import launch_browser_context
 from config import MAX_CONCURRENCY, REQUEST_TIMEOUT
 
-
-URL_MAIN = "https://www.tiktok.com/login/phone-or-email/email"
+# Используем новую, более прямую ссылку
+URL_MAIN = "https://www.tiktok.com/login/email/forget-password"
 
 
 class TikTokChecker:
@@ -42,162 +42,155 @@ class TikTokChecker:
             return None
         return sorted(candidates, key=lambda p: p.error_count)[0]
 
-    async def check_email(self, email: str, proxy: ProxyModel):
+    async def process_email_on_page(self, page, email: str, proxy: ProxyModel) -> bool:
+        """
+        Проверяет один email на уже открытой странице (Шаги 7-9).
+        Возвращает True, если нужно закрыть браузер и перезапуститься (критическая ошибка/rate limit).
+        """
+
+        await self.log(f"→ <code>{email}</code>: проверка через {proxy.host}")
+
+        try:
+            # --- 7. ВВОД EMAIL ---
+            try:
+                inp = page.locator('input[name="email"]')
+
+                # ОЧИЩАЕМ поле перед вводом нового email (fill("") работает, даже если поле пустое)
+                await inp.fill("")
+                await inp.click()
+                await page.keyboard.type(email, delay=uniform(50, 100))
+            except:
+                await self.log(f"⚠️ {email}: Поле ввода email не найдено")
+                self.failed_emails.append(email)
+                return False
+
+            await sleep(uniform(1, 1.5))
+
+            # --- СТАБИЛИЗАЦИЯ (TAB для прокрутки/фокуса) ---
+            # Перемещаем фокус из поля email, чтобы открыть кнопку "Отправить код"
+            await page.keyboard.press("Tab")
+            await sleep(uniform(0.5, 1))
+
+            # --- 8. ОТПРАВИТЬ / SEND CODE ---
+            await self.log(f"→ <code>{email}</code>: Пытаюсь нажать кнопку 'Отправить код'")
+            SEND_BUTTON_SELECTOR = 'button:has-text("Отправить код"), button:has-text("Send code")'
+
+            try:
+                # Ждем, пока кнопка станет видимой и кликабельной
+                await page.wait_for_selector(SEND_BUTTON_SELECTOR, state='visible', timeout=15000)
+                await page.locator(SEND_BUTTON_SELECTOR).click()
+            except PlaywrightTimeoutError:
+                await self.log(f"⚠️ {email}: Кнопка 'Отправить код' не найдена (Таймаут)")
+                self.failed_emails.append(email)
+                return False
+            except Exception as e:
+                await self.log(f"⚠️ {email}: Ошибка клика по кнопке 'Отправить код' ({type(e).__name__})")
+                self.failed_emails.append(email)
+                return False
+
+            await self.log(f"→ <code>{email}</code>: Нажата кнопка 'Отправить код'")
+            await sleep(4)
+
+            # --- 9. АНАЛИЗ РЕЗУЛЬТАТА ---
+            html = (await page.content()).lower()
+
+            limit_errors = ["too many", "слишком много", "rate limit"]
+            if any(x in html for x in limit_errors):
+                proxy.error_count += 1
+                proxy.cooldown(15)
+                await self.log(f"⚠️ {email}: Лимит запросов (rate limit)")
+                return True
+
+            not_found = [
+                "не зарегистрирован", "not registered", "does not exist",
+                "isn't registered yet", "адрес эл. почты не зарегистрирован",
+                "email address isn't registered yet"
+            ]
+
+            if any(x in html for x in not_found):
+                proxy.success_count += 1
+                await self.log(f"❌ <code>{email}</code>: не зарегистрирован")
+                await update_email_status(self.user_id, email, 'invalid')
+            else:
+                self.valid_emails.append(email)
+                proxy.success_count += 1
+                await self.log(f"✅ <code>{email}</code>: ВАЛИД!")
+                await update_email_status(self.user_id, email, 'valid')
+
+            return False
+
+        except Exception as e:
+            await self.log(f"⚠️ Критическая ошибка {email}: {type(e).__name__}")
+            self.failed_emails.append(email)
+            return True  # Требуется перезапуск браузера
+
+        finally:
+            # После проверки *не* перезагружаем страницу, а просто ожидаем,
+            # что форма вернется в исходное состояние (поле ввода и кнопка).
+            await sleep(uniform(1, 2))
+
+    async def check_email(self, proxy: ProxyModel):
         proxy_str = proxy.proxy_string
         server = proxy.host + (f":{proxy.port}" if proxy.port else "")
 
         browser = None
+        context = None
+
         try:
             async with async_playwright() as pw:
-                browser, context, page = await launch_browser_context(pw, proxy_str, headless=False) # TODO: True
+                # --- 1. ЗАПУСК БРАУЗЕРА ---
+                await self.log(f"→ 🔄 Запуск браузера через {server}")
+                browser, context, page = await launch_browser_context(pw, proxy_str, headless=False)  # TODO: True
                 page.set_default_timeout(REQUEST_TIMEOUT)
 
-                await self.log(f"→ <code>{email}</code>: проверка через {server}")
+                # --- 2. ПЕРВЫЙ ЗАХОД НА САЙТ (Один раз) ---
+                await page.goto(URL_MAIN, wait_until="domcontentloaded", timeout=60000)
 
-                # Получаем IP (для диагностики)
-                # ip_info = await get_browser_ip(page)
-                # await self.log(f"🌍 IP: {ip_info}")
-
-                # --- 1. ЗАХОД НА САЙТ ---
+                # --- 3. ОБРАБОТКА COOKIE (Один раз) ---
+                COOKIE_DENY_SELECTOR = 'button:has-text("Отклонить использование дополнительных файлов cookie"), button:has-text("Deny additional cookies")'
                 try:
-                    response = await page.goto(URL_MAIN, wait_until="domcontentloaded")  # TODO: "load" если не открывается
-                    if response and response.status >= 400:
-                        raise Exception(f"HTTP {response.status}")
-                except (PlaywrightTimeoutError, Exception):
-                    proxy.error_count += 1
-                    proxy.cooldown(5)
-                    await self.log(f"⏱️ <code>{email}</code>: сайт не открылся (таймаут/ошибка)")
-                    self.failed_emails.append(email)
-                    return
-
-                await sleep(uniform(2, 4))
-
-                # --- 5. ЖМЕМ "Забыли пароль?" ---
-                await self.log(f"→ <code>{email}</code>: Нажимаю 'Забыли пароль?'")
-                try:
-                    # Ждем ссылку "Забыли пароль?" или "Forgot password?"
-                    await page.locator('text=/Забыли пароль|Forgot password/i').click(timeout=10000)
-                except PlaywrightTimeoutError:
-                    await self.log(f"⚠️ {email}: Ссылка 'Забыли пароль' не найдена (Таймаут)")
-                    self.failed_emails.append(email)
-                    return
+                    await page.wait_for_selector(COOKIE_DENY_SELECTOR, state='visible', timeout=5000)
+                    await page.locator(COOKIE_DENY_SELECTOR).click()
+                    await self.log(f"→ <code>{server}</code>: Отклонены дополнительные файлы cookie.")
+                except:
+                    pass
 
                 await sleep(uniform(1, 2))
 
-                # --- 6. ЖМЕМ "СБРОС ПО ПОЧТЕ" (Теперь это не всегда нужно, но оставим для надежности) ---
-                # Часто сразу открывается поле ввода
-                try:
-                    await page.get_by_text("Сброс пароля по электронной почте").click(timeout=5000)
-                except:
-                    pass
+                # --- 4. ЦИКЛ ОБРАБОТКИ EMAIL ---
+                while self.is_running:
+                    try:
+                        email = await wait_for(self.emails_queue.get(), timeout=0.1)
+                    except AsyncTimeoutError:
+                        break
 
-                await sleep(1)
+                    # Выполняем проверку
+                    should_restart = await self.process_email_on_page(page, email, proxy)
+                    self.emails_queue.task_done()
+                    self.checked_count += 1
 
-                # --- 6.5 ОТКЛОНЕНИЕ COOKIE, ЕСЛИ БАННЕР ВИДИМ ---
-                COOKIE_DENY_SELECTOR = 'button:has-text("Отклонить использование дополнительных файлов cookie"), button:has-text("Deny additional cookies")'
+                    if should_restart:
+                        self.emails_queue.put_nowait(email)
+                        break
 
-                try:
-                    # Используем короткий таймаут (5 секунд), чтобы не блокировать чекер
-                    # Если элемент невидим, Playwright выбросит ошибку, и мы перейдем к 'except'
-                    await page.wait_for_selector(COOKIE_DENY_SELECTOR, state='visible', timeout=5000)
+                await self.log(f"→ ✅ Поток через {server} завершил сессию.")
 
-                    # Если баннер найден, нажимаем кнопку отклонения
-                    await page.locator(COOKIE_DENY_SELECTOR).click()
-                    await self.log(f"→ <code>{email}</code>: Отклонены дополнительные файлы cookie.")
-
-                except PlaywrightTimeoutError:
-                    # Это ожидаемое поведение, если баннер не появился. Просто продолжаем.
-                    pass
-                except Exception as e:
-                    # На случай, если клик не удался, хотя элемент найден
-                    await self.log(f"⚠️ {email}: Ошибка клика по кнопке cookie ({type(e).__name__})")
-                    # Не возвращаем ошибку, просто идем дальше
-                    pass
-
-                await sleep(1)
-
-                # --- 7. ВВОД EMAIL ---
-                try:
-                    inp = page.locator('input[name="email"]')
-                    await inp.click()
-                    await page.keyboard.type(email, delay=uniform(50, 100))
-                except:
-                    await self.log(f"⚠️ {email}: Поле ввода email не найдено")
-                    self.failed_emails.append(email)
-                    return
-
-                await sleep(uniform(1, 1.5))
-
-                # --- 8. ОТПРАВИТЬ / SEND CODE ---
-                await self.log(f"→ <code>{email}</code>: Пытаюсь нажать кнопку 'Отправить код'")
-
-                # Ищем кнопку по тексту ("Отправить код" или "Send code")
-                SEND_BUTTON_SELECTOR = 'button:has-text("Отправить код"), button:has-text("Send code")'
-
-                try:
-                    # Ждем, пока кнопка станет видимой и кликабельной (до 15 секунд)
-                    await page.wait_for_selector(
-                        SEND_BUTTON_SELECTOR,
-                        state='visible',
-                        timeout=15000
-                    )
-                    await page.locator(SEND_BUTTON_SELECTOR).click()
-                except PlaywrightTimeoutError:
-                    await self.log(f"⚠️ {email}: Кнопка 'Отправить код' не найдена (Таймаут)")
-                    self.failed_emails.append(email)
-                    return
-                except Exception as e:
-                    # Если найдено, но не удалось кликнуть по другой причине
-                    await self.log(f"⚠️ {email}: Ошибка клика по кнопке 'Отправить код' ({type(e).__name__})")
-                    self.failed_emails.append(email)
-                    return
-
-                await self.log(f"→ <code>{email}</code>: Нажата кнопка 'Отправить код'")
-                await sleep(4)  # Ждем загрузки ответа
-
-                # --- 9. АНАЛИЗ РЕЗУЛЬТАТА ---
-                html = (await page.content()).lower()
-
-                limit_errors = ["too many", "слишком много", "rate limit"]
-                if any(x in html for x in limit_errors):
-                    proxy.error_count += 1
-                    proxy.cooldown(15)
-                    await self.log(f"⚠️ {email}: Лимит запросов (rate limit)")
-                    self.emails_queue.put_nowait(email)  # Возвращаем в очередь
-                    return
-
-                # Обновленный список ключевых фраз для "Не зарегистрирован"
-                not_found = [
-                    "не зарегистрирован",
-                    "not registered",
-                    "does not exist",
-                    "isn't registered yet",
-                    "Адрес эл. почты не зарегистрирован",
-                    "Email address isn't registered yet"
-                ]
-
-                if any(x in html for x in not_found):
-                    proxy.success_count += 1
-                    await self.log(f"❌ <code>{email}</code>: не зарегистрирован")
-                    # ОБНОВЛЕНИЕ БД
-                    await update_email_status(self.user_id, email, 'invalid')
-                    return
-
-                # Если ВАЛИД (Нет ни лимита, ни ошибки "Не зарегистрирован")
-                self.valid_emails.append(email)
-                proxy.success_count += 1
-                await self.log(f"✅ <code>{email}</code>: ВАЛИД!")
-                # ОБНОВЛЕНИЕ БД
-                await update_email_status(self.user_id, email, 'valid')
+        except PlaywrightTimeoutError as e:
+            proxy.error_count += 1
+            proxy.cooldown(5)
+            await self.log(f"❌ Критический таймаут {server}: {type(e).__name__}. Перезапуск...")
 
         except Exception as e:
-            # Ошибка самого Playwright или сети
             proxy.error_count += 1
             proxy.cooldown(2)
-            await self.log(f"⚠️ Ошибка {email}: {type(e).__name__}")
-            self.failed_emails.append(email)
+            await self.log(f"❌ Критическая ошибка {server}: {type(e).__name__}. Перезапуск...")
 
         finally:
+            if context:
+                try:
+                    await context.close()
+                except:
+                    pass
             if browser:
                 try:
                     await browser.close()
@@ -207,11 +200,12 @@ class TikTokChecker:
     async def worker(self):
         while self.is_running:
             try:
-                email = await wait_for(self.emails_queue.get(), timeout=2)
+                email_peek = await wait_for(self.emails_queue.get(), timeout=2)
+                self.emails_queue.put_nowait(email_peek)
             except AsyncTimeoutError:
                 continue
 
-            if email is None:
+            if not self.is_running:
                 break
 
             proxy = None
@@ -227,16 +221,10 @@ class TikTokChecker:
 
             if not proxy:
                 await self.log("🚫 Все прокси недоступны")
-                self.emails_queue.task_done()
-                # Возвращаем email обратно в очередь, так как не смогли проверить
-                # self.emails_queue.put_nowait(email) 
-                continue
+                break
 
             async with self.semaphore:
-                await self.check_email(email, proxy)
-
-            self.emails_queue.task_done()
-            self.checked_count += 1
+                await self.check_email(proxy)
 
             if self.checked_count % 5 == 0 and self.total_emails:
                 progress = (self.checked_count / self.total_emails) * 100
