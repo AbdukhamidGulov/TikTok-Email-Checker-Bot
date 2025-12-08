@@ -49,7 +49,7 @@ class TikTokChecker:
         browser = None
         try:
             async with async_playwright() as pw:
-                browser, context, page = await launch_browser_context(pw, proxy_str, headless=False)
+                browser, context, page = await launch_browser_context(pw, proxy_str, headless=False) # TODO: True
                 page.set_default_timeout(REQUEST_TIMEOUT)
 
                 await self.log(f"→ <code>{email}</code>: проверка через {server}")
@@ -60,7 +60,7 @@ class TikTokChecker:
 
                 # --- 1. ЗАХОД НА САЙТ ---
                 try:
-                    response = await page.goto(URL_MAIN, wait_until="domcontentloaded")
+                    response = await page.goto(URL_MAIN, wait_until="domcontentloaded")  # TODO: "load"
                     if response and response.status >= 400:
                         raise Exception(f"HTTP {response.status}")
                 except (PlaywrightTimeoutError, Exception):

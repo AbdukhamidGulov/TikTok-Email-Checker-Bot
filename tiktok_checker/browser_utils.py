@@ -28,6 +28,7 @@ async def launch_browser_context(playwright, proxy_str: str, headless: bool = Tr
     )
 
     page = await context.new_page()
+    page.set_default_navigation_timeout(60000)
     return browser, context, page
 
 
