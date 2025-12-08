@@ -69,8 +69,8 @@ async def handle_start_check(message: Message, bot):
         return
 
     # Проверка: не запущена ли уже задача
-    if user_id in checker_tasks and not checker_tasks[user_id].done():
-        await message.answer("⚠️ <b>Проверка уже запущена!</b> Используйте кнопку 'Остановить'.",
+    if user_id in checker_tasks and checker_tasks[user_id] is not None and not checker_tasks[user_id].done():
+        await message.answer("⚠️ <b>Другая проверка уже запущена!</b> Используйте кнопку '<code>Остановить</code>'.",
                              reply_markup=get_main_keyboard(is_running=True))
         return
 

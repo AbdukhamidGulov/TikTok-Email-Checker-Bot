@@ -11,7 +11,7 @@ from .browser_utils import launch_browser_context
 from config import MAX_CONCURRENCY, REQUEST_TIMEOUT
 
 
-URL_MAIN = "https://www.tiktok.com/"
+URL_MAIN = "https://www.tiktok.com/login/phone-or-email/email"
 
 
 class TikTokChecker:
@@ -60,7 +60,7 @@ class TikTokChecker:
 
                 # --- 1. ЗАХОД НА САЙТ ---
                 try:
-                    response = await page.goto(URL_MAIN, wait_until="domcontentloaded")  # TODO: "load"
+                    response = await page.goto(URL_MAIN, wait_until="domcontentloaded")  # TODO: "load" если не открывается
                     if response and response.status >= 400:
                         raise Exception(f"HTTP {response.status}")
                 except (PlaywrightTimeoutError, Exception):
@@ -72,70 +72,47 @@ class TikTokChecker:
 
                 await sleep(uniform(2, 4))
 
-                # --- 2. НАЖИМАЕМ КНОПКУ "ВОЙТИ" (Главная) ---
-                login_btn_found = False
+                # --- 5. ЖМЕМ "Забыли пароль?" ---
+                await self.log(f"→ <code>{email}</code>: Нажимаю 'Забыли пароль?'")
                 try:
-                    # Пробуем селектор
-                    btn = page.locator('button[data-e2e="top-login-button"]').first
-                    if await btn.is_visible():
-                        await btn.click()
-                        login_btn_found = True
-                    else:
-                        # Запасные варианты
-                        for sel in ['button:has-text("Войти")', 'button:has-text("Log in")']:
-                            if await page.locator(sel).first.is_visible():
-                                await page.locator(sel).first.click()
-                                login_btn_found = True
-                                break
-                except:
-                    pass
-
-                if not login_btn_found:
-                    # Не баним прокси, если просто не нашли кнопку (может лаг интерфейса)
-                    await self.log(f"⚠️ {email}: Кнопка 'Войти' не найдена")
+                    # Ждем ссылку "Забыли пароль?" или "Forgot password?"
+                    await page.locator('text=/Забыли пароль|Forgot password/i').click(timeout=10000)
+                except PlaywrightTimeoutError:
+                    await self.log(f"⚠️ {email}: Ссылка 'Забыли пароль' не найдена (Таймаут)")
                     self.failed_emails.append(email)
                     return
 
-                await sleep(uniform(1.5, 2.5))
-
-                # --- 3. ВЫБИРАЕМ СПОСОБ ВХОДА (Телефон/Почта) ---
-                try:
-                    await page.locator("xpath=//div[contains(text(), 'Использовать номер телефона')]").first.click()
-                except:
-                    # Возможно сразу открылось нужное окно, идем дальше
-                    pass
-
                 await sleep(uniform(1, 2))
 
-                # --- 4. ПЕРЕКЛЮЧАЕМСЯ НА ПОЧТУ ---
-                # Часто открывается вкладка телефона по умолчанию
+                # --- 6. ЖМЕМ "СБРОС ПО ПОЧТЕ" (Теперь это не всегда нужно, но оставим для надежности) ---
+                # Часто сразу открывается поле ввода
                 try:
-                    link = page.get_by_text("Войти через эл. почту")
-                    if await link.is_visible():
-                        await link.click()
-                        await sleep(1)
+                    await page.get_by_text("Сброс пароля по электронной почте").click(timeout=5000)
                 except:
                     pass
 
-                # --- 5. ЖМЕМ "ЗАБЫЛИ ПАРОЛЬ?" ---
-                try:
-                    await page.get_by_text("Забыли пароль?").click()
-                except:
-                    # Попробуем английский вариант или другой селектор
-                    try:
-                        await page.get_by_text("Forgot password?").click()
-                    except:
-                        await self.log(f"⚠️ {email}: Ссылка 'Забыли пароль' не найдена")
-                        self.failed_emails.append(email)
-                        return
+                await sleep(1)
 
-                await sleep(uniform(1, 2))
+                # --- 6.5 ОТКЛОНЕНИЕ COOKIE, ЕСЛИ БАННЕР ВИДИМ ---
+                COOKIE_DENY_SELECTOR = 'button:has-text("Отклонить использование дополнительных файлов cookie"), button:has-text("Deny additional cookies")'
 
-                # --- 6. ЖМЕМ "СБРОС ПО ПОЧТЕ" ---
                 try:
-                    await page.get_by_text("Сброс пароля по электронной почте").click()
-                except:
-                    pass # Иногда это меню не вылезает, если сразу открылось поле ввода
+                    # Используем короткий таймаут (5 секунд), чтобы не блокировать чекер
+                    # Если элемент невидим, Playwright выбросит ошибку, и мы перейдем к 'except'
+                    await page.wait_for_selector(COOKIE_DENY_SELECTOR, state='visible', timeout=5000)
+
+                    # Если баннер найден, нажимаем кнопку отклонения
+                    await page.locator(COOKIE_DENY_SELECTOR).click()
+                    await self.log(f"→ <code>{email}</code>: Отклонены дополнительные файлы cookie.")
+
+                except PlaywrightTimeoutError:
+                    # Это ожидаемое поведение, если баннер не появился. Просто продолжаем.
+                    pass
+                except Exception as e:
+                    # На случай, если клик не удался, хотя элемент найден
+                    await self.log(f"⚠️ {email}: Ошибка клика по кнопке cookie ({type(e).__name__})")
+                    # Не возвращаем ошибку, просто идем дальше
+                    pass
 
                 await sleep(1)
 
@@ -151,16 +128,32 @@ class TikTokChecker:
 
                 await sleep(uniform(1, 1.5))
 
-                # --- 8. ОТПРАВИТЬ ---
+                # --- 8. ОТПРАВИТЬ / SEND CODE ---
+                await self.log(f"→ <code>{email}</code>: Пытаюсь нажать кнопку 'Отправить код'")
+
+                # Ищем кнопку по тексту ("Отправить код" или "Send code")
+                SEND_BUTTON_SELECTOR = 'button:has-text("Отправить код"), button:has-text("Send code")'
+
                 try:
-                    # Селектор из теста
-                    await page.locator('button[type="submit"]').click()
-                except:
-                    await self.log(f"⚠️ {email}: Кнопка отправки не найдена")
+                    # Ждем, пока кнопка станет видимой и кликабельной (до 15 секунд)
+                    await page.wait_for_selector(
+                        SEND_BUTTON_SELECTOR,
+                        state='visible',
+                        timeout=15000
+                    )
+                    await page.locator(SEND_BUTTON_SELECTOR).click()
+                except PlaywrightTimeoutError:
+                    await self.log(f"⚠️ {email}: Кнопка 'Отправить код' не найдена (Таймаут)")
+                    self.failed_emails.append(email)
+                    return
+                except Exception as e:
+                    # Если найдено, но не удалось кликнуть по другой причине
+                    await self.log(f"⚠️ {email}: Ошибка клика по кнопке 'Отправить код' ({type(e).__name__})")
                     self.failed_emails.append(email)
                     return
 
-                await sleep(4) # Ждем загрузки ответа
+                await self.log(f"→ <code>{email}</code>: Нажата кнопка 'Отправить код'")
+                await sleep(4)  # Ждем загрузки ответа
 
                 # --- 9. АНАЛИЗ РЕЗУЛЬТАТА ---
                 html = (await page.content()).lower()
@@ -170,12 +163,19 @@ class TikTokChecker:
                     proxy.error_count += 1
                     proxy.cooldown(15)
                     await self.log(f"⚠️ {email}: Лимит запросов (rate limit)")
-                    # Не меняем статус в БД, чтобы перепроверить позже,
-                    # или ставим 'error' если хочешь пропустить
                     self.emails_queue.put_nowait(email)  # Возвращаем в очередь
                     return
 
-                not_found = ["не зарегистрирован", "does not exist", "not registered"]
+                # Обновленный список ключевых фраз для "Не зарегистрирован"
+                not_found = [
+                    "не зарегистрирован",
+                    "not registered",
+                    "does not exist",
+                    "isn't registered yet",
+                    "Адрес эл. почты не зарегистрирован",
+                    "Email address isn't registered yet"
+                ]
+
                 if any(x in html for x in not_found):
                     proxy.success_count += 1
                     await self.log(f"❌ <code>{email}</code>: не зарегистрирован")
@@ -183,7 +183,7 @@ class TikTokChecker:
                     await update_email_status(self.user_id, email, 'invalid')
                     return
 
-                # Если ВАЛИД
+                # Если ВАЛИД (Нет ни лимита, ни ошибки "Не зарегистрирован")
                 self.valid_emails.append(email)
                 proxy.success_count += 1
                 await self.log(f"✅ <code>{email}</code>: ВАЛИД!")
